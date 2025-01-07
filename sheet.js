@@ -4,7 +4,7 @@ const auth = require('./auth');
 const { generateDocument, cleanupTempFile } = require('./docs');
 // ID Spreadsheet
 const spreadsheetId = process.env.SPREADSHEET_ID;
-const suratFormat = require('./formatSurat.js')
+const suratFormat = require('./surat.js')
 
 // Fungsi untuk membuat sheet baru
 async function createNewSheet(sheets, sheetName) {

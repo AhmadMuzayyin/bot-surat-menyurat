@@ -24,12 +24,13 @@ const {
   saveUsersData,
   getUsersData
 } = require('./users');
-const suratFormat = require('./formatSurat.js')
+const { suratFormat, jenisSuratKeluar } = require('./surat.js');
+const { getRegisteredUsers } = require('./users.js');
 require('dotenv').config()
 initializeUsersFile();
 
 // Ganti dengan token bot Anda
-const token = '7439515466:AAFrpH9Nfl86ikObp-X6skbyEX6Q895LWEE';
+const token = process.env.BOT_TOKEN;
 const bot = new TelegramBot(token, { polling: true });
 
 async function checkUserAuthorization(msg, bot) {
@@ -179,7 +180,6 @@ bot.onText(/\/daftar/, async (msg) => {
   );
 });
 
-const jenisSuratKeluar = ['Keterangan Usaha', 'SKCK', 'Rekom BBM Solar', 'Rekom BBM Pertalite', 'Keterangan Kematian', 'Keterangan Domisili', 'Keterangan Domisili Organisasi', 'Keterangan Tidak Mampu Umum', 'Keterangan Tidak Mampu Dengan Penghasilan Orang Tua', 'Keterangan Satu Nama Umum', 'Keterangan Satu Nama Khusus', 'Keterangan Asal Usul', 'Keterangan Pindah Domisili', 'Keterangan Kuasa', 'Pemberitahuan'];
 function validateLetterType(type) {
   return jenisSuratKeluar.includes(type);
 }
@@ -438,6 +438,10 @@ bot.onText(/\/sheets/, async (msg) => {
     data: {}
   };
 
+  if (!isAdmin(chatId)) {
+    await bot.sendMessage(chatId, '⚠️ Anda tidak memiliki akses ke perintah ini.');
+    return;
+  }
   const keyboard = {
     reply_markup: {
       inline_keyboard: [
@@ -659,6 +663,50 @@ bot.onText(/\/template/, async (msg) => {
     }
   );
 });
+bot.onText(/\/users/, async (msg) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+
+  try {
+    if (!isAdmin(userId)) {
+      await bot.sendMessage(chatId, '⚠️ Anda tidak memiliki akses ke perintah ini.');
+      return;
+    }
+
+    const result = await getRegisteredUsers();
+    if (!result.success) {
+      throw new Error(result.error);
+    }
+
+    if (result.users.length === 0) {
+      await bot.sendMessage(chatId, '📋 Tidak ada user yang terdaftar.');
+      return;
+    }
+
+    let message = '*Daftar User Terdaftar*\n\n';
+    for (const user of result.users) {
+      message = `👤 *${user.firstName} ${user.lastName || ''}*\n`;
+      message += `Username: ${user.username ? '@' + user.username : '-'}\n`;
+      message += `ID: \`${user.userId}\`\n`;
+      message += `Terdaftar: ${new Date(user.approvedAt).toLocaleString('id-ID')}`;
+
+      const keyboard = {
+        inline_keyboard: [
+          [{ text: '❌ Keluarkan', callback_data: `remove_${user.userId}` }]
+        ]
+      };
+
+      await bot.sendMessage(chatId, message, {
+        parse_mode: 'Markdown',
+        reply_markup: keyboard
+      });
+    }
+
+  } catch (error) {
+    console.error('Error in /users command:', error);
+    await bot.sendMessage(chatId, '❌ Terjadi kesalahan saat mengambil data user.');
+  }
+});
 bot.onText(/\/cancel/, (msg) => {
   const chatId = msg.chat.id;
   handleCancel(chatId);
@@ -672,6 +720,56 @@ function handleCancel(chatId) {
 bot.on('callback_query', async (query) => {
   const chatId = query.message.chat.id;
   const data = query.data;
+  if (data.startsWith('remove_')) {
+    const userId = data.split('_')[1];
+
+    if (!isAdmin(query.from.id)) {
+      await bot.answerCallbackQuery(query.id, {
+        text: '⚠️ Anda tidak memiliki akses untuk melakukan ini',
+        show_alert: true
+      });
+      return;
+    }
+
+    try {
+      const userData = await getUsersData();
+      const userIndex = userData.users.findIndex(u => u.userId.toString() === userId);
+
+      if (userIndex > -1) {
+        const removedUser = userData.users.splice(userIndex, 1)[0];
+        await saveUsersData(userData);
+
+        await bot.editMessageText(
+          `✅ User ${removedUser.firstName} telah dikeluarkan dari daftar terdaftar`,
+          {
+            chat_id: chatId,
+            message_id: query.message.message_id,
+            parse_mode: 'Markdown'
+          }
+        );
+
+        // Kirim pesan ke user yang dikeluarkan
+        try {
+          await bot.sendMessage(
+            userId,
+            '❌ Akses Anda telah dicabut oleh admin. Hubungi admin untuk informasi lebih lanjut.'
+          );
+        } catch (notifyError) {
+          console.error('Failed to notify removed user:', notifyError);
+        }
+      }
+
+      await bot.answerCallbackQuery(query.id);
+
+    } catch (error) {
+      console.error('Error removing user:', error);
+      await bot.answerCallbackQuery(query.id, {
+        text: '❌ Gagal mengeluarkan user',
+        show_alert: true
+      });
+    }
+    return;
+  }
   if (query.data.startsWith('approve_rejected_')) {
     // Cek apakah user adalah admin
     if (!isAdmin(query.from.id)) {
@@ -1233,7 +1331,6 @@ bot.on('message', async (msg) => {
       processCompletedForm(chatId, userState, msg);
     }
   }
-
   if (userState && userState.type === 'wait_letter_number' && !msg.text.startsWith('/')) {
     try {
       const letterNumber = msg.text.trim();

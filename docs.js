@@ -40,7 +40,9 @@ async function generateDocument(templateType, data) {
     const copyResponse = await drive.files.copy({
       fileId: templateId,
       requestBody: {
-        name: `${templateType}_${new Date().toISOString()}`,
+        name: `${templateType}_${new Date().toLocaleString('id-ID', {
+          dateStyle: 'long'
+        })}`,
       }
     });
     const documentId = copyResponse.data.id;
@@ -78,7 +80,9 @@ async function generateDocument(templateType, data) {
     });
 
     // Save PDF temporarily
-    const fileName = `${templateType}_${Date.now()}.docx`;
+    const fileName = `${templateType}_${new Date().toLocaleString('id-ID', {
+      dateStyle: 'long'
+    })}.docx`;
     const filePath = path.join(__dirname, 'temp', fileName);
 
     // Ensure temp directory exists

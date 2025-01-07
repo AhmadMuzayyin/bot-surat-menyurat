@@ -212,4 +212,7 @@ const suratFormat = {
     { no: 13, field: 'Di' }
   ]
 };
-module.exports = suratFormat
+const jenisSuratKeluar = [
+  'Keterangan Usaha', 'SKCK', 'Rekom BBM Solar', 'Rekom BBM Pertalite', 'Keterangan Kematian', 'Keterangan Domisili', 'Keterangan Domisili Organisasi', 'Keterangan Tidak Mampu Umum', 'Keterangan Tidak Mampu Dengan Penghasilan Orang Tua', 'Keterangan Satu Nama Umum', 'Keterangan Satu Nama Khusus', 'Keterangan Asal Usul', 'Keterangan Pindah Domisili', 'Keterangan Kuasa', 'Pemberitahuan'
+];
+module.exports = { suratFormat, jenisSuratKeluar };
