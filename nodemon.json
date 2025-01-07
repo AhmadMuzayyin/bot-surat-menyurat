@@ -1,0 +1,10 @@
+{
+  "ignore": [
+    "users.json",
+    "node_modules/**/node_modules"
+  ],
+  "watch": [
+    "*.js",
+    "*.json"
+  ]
+}
