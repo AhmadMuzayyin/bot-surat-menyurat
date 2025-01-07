@@ -210,6 +210,10 @@ const suratFormat = {
     { no: 11, field: 'Untuk' },
     { no: 12, field: 'Pada' },
     { no: 13, field: 'Di' }
+  ],
+  'Custom': [
+    { no: 1, field: 'Nama Surat' },
+    { no: 2, field: 'Isi Surat' },
   ]
 };
 const jenisSuratKeluar = [

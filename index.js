@@ -381,6 +381,43 @@ bot.onText(/\/undangan/, async (msg) => {
 
   bot.sendMessage(chatId, formatMessage, cancelKeyboard);
 });
+bot.onText(/\/custom/, async (msg) => {
+  if (msg.text && (msg.text === '/start' || msg.text === '/daftar')) {
+    return;
+  }
+  const isAuthorized = await checkUserAuthorization(msg, bot);
+  if (!isAuthorized) {
+    return;
+  }
+  const chatId = msg.chat.id;
+  userStates[chatId] = {
+    type: 'Custom',
+    data: {}
+  };
+
+  // Tampilkan format input
+  let formatMessage = 'Silakan masukkan data custom surat dengan format berikut:\n\n';
+  suratFormat['Custom'].forEach(item => {
+    formatMessage += `${item.no}. ${item.field}\n`;
+  });
+  formatMessage += '\nContoh input:\n';
+  formatMessage += '1. Surat Pembentukan Panitia\n';
+  formatMessage += '2. Diisi sesuai kebutuhan\n';
+  formatMessage += 'dst.\n\n';
+  formatMessage += 'Masukkan semua data sekaligus sesuai format nomor di atas\n';
+  formatMessage += 'Atau kirim /cancel untuk membatalkan';
+
+  // Buat keyboard dengan tombol cancel
+  const cancelKeyboard = {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '❌ Cancel', callback_data: 'cancel' }]
+      ]
+    }
+  };
+
+  bot.sendMessage(chatId, formatMessage, cancelKeyboard);
+});
 const skFormat = [
   { no: 1, field: 'Tentang' },
   { no: 2, field: 'Tanggal' },
@@ -609,7 +646,11 @@ bot.onText(/\/edit/, async (msg, match) => {
 });
 bot.onText(/\/template/, async (msg) => {
   const chatId = msg.chat.id;
-
+  const userId = msg.from.id;
+  if (!isAdmin(userId)) {
+    await bot.sendMessage(chatId, '⚠️ Anda tidak memiliki akses ke perintah ini.');
+    return;
+  }
   const templates = {
     'Keterangan Usaha': `https://docs.google.com/document/d/${process.env.KETERANGAN_USAHA}/edit?tab=t.0`,
     'SKCK': `https://docs.google.com/document/d/${process.env.SKCK}/edit?tab=t.0`,
@@ -1001,6 +1042,58 @@ bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const userState = userStates[chatId];
   if (userState && validateLetterType(userState.type) && !msg.text.startsWith('/')) {
+    const lines = msg.text.split('\n');
+    const data = {};
+    const errors = [];
+
+    lines.forEach(line => {
+      const match = line.match(/^(\d+)\.\s*(.+)$/);
+      if (match) {
+        const no = parseInt(match[1]);
+        const value = match[2].trim();
+
+        const fieldObj = suratFormat[userState.type].find(f => f.no === no);
+        if (fieldObj) {
+          data[fieldObj.field] = value;
+        } else {
+          errors.push(`Nomor ${no} tidak valid`);
+        }
+      } else {
+        errors.push(`Format baris "${line}" tidak valid`);
+      }
+    });
+    const missingFields = suratFormat[userState.type].filter(field =>
+      !data[field.field]
+    );
+
+    const cancelKeyboard = {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '❌ Cancel', callback_data: 'cancel' }]
+        ]
+      }
+    };
+
+    if (errors.length > 0) {
+      bot.sendMessage(chatId,
+        'Terdapat kesalahan dalam input:\n' +
+        errors.join('\n') +
+        '\n\nSilakan input ulang sesuai format atau kirim /cancel untuk membatalkan.',
+        cancelKeyboard
+      );
+    } else if (missingFields.length > 0) {
+      bot.sendMessage(chatId,
+        'Data belum lengkap. Field yang belum diisi:\n' +
+        missingFields.map(f => `${f.no}. ${f.field}`).join('\n') +
+        '\n\nSilakan input ulang dengan data lengkap atau kirim /cancel untuk membatalkan.',
+        cancelKeyboard
+      );
+    } else {
+      userState.data = data;
+      processCompletedForm(chatId, userState, msg);
+    }
+  }
+  if (userState && userState.type === 'Custom' && !msg.text.startsWith('/')) {
     const lines = msg.text.split('\n');
     const data = {};
     const errors = [];
@@ -1456,29 +1549,37 @@ async function processCompletedForm(chatId, userState, userData) {
     const result = await saveSuratKeluarToSpreadsheet(userState, sheetName, userData);
 
     if (result.success) {
-      let message = `✅ Data surat ${userState.type} telah berhasil disimpan.\n\n`;
-      message += `📃 Nomor Surat: ${result.letterNumber}\n\n`;
-      message += `Sedang memproses dokumen...`;
+      if (userState.type === 'Custom') {
+        let message = `✅ Data surat ${userState.type} telah berhasil disimpan.\n\n`;
+        message += `📃 Nomor Surat: ${result.letterNumber}\n\n`;
+        await bot.sendMessage(chatId, message);
+      }
 
-      await bot.sendMessage(chatId, message);
-      const documentData = {
-        ...userState.data,
-        NomorSurat: result.letterNumber,
-        TanggalSurat: new Date().toLocaleDateString('id-ID', {
-          dateStyle: 'long'
-        })
-      };
-      const docResult = await generateDocument(userState.type, documentData);
-      if (docResult.success) {
-        await bot.sendDocument(chatId, docResult.filePath, {
-          caption: `Dokumen ${userState.type} - ${result.letterNumber}`
-        });
-        cleanupTempFile(docResult.filePath);
-      } else {
-        await bot.sendMessage(
-          chatId,
-          '❌ Berhasil menyimpan data tetapi gagal generate dokumen. Error: ' + docResult.error
-        );
+      if (userState.type !== 'Custom') {
+        let message = `✅ Data surat ${userState.type} telah berhasil disimpan.\n\n`;
+        message += `📃 Nomor Surat: ${result.letterNumber}\n\n`;
+        message += `Sedang memproses dokumen...`;
+
+        await bot.sendMessage(chatId, message);
+        const documentData = {
+          ...userState.data,
+          NomorSurat: result.letterNumber,
+          TanggalSurat: new Date().toLocaleDateString('id-ID', {
+            dateStyle: 'long'
+          })
+        };
+        const docResult = await generateDocument(userState.type, documentData);
+        if (docResult.success) {
+          await bot.sendDocument(chatId, docResult.filePath, {
+            caption: `Dokumen ${userState.type} - ${result.letterNumber}`
+          });
+          cleanupTempFile(docResult.filePath);
+        } else {
+          await bot.sendMessage(
+            chatId,
+            '❌ Berhasil menyimpan data tetapi gagal generate dokumen. Error: ' + docResult.error
+          );
+        }
       }
     } else {
       bot.sendMessage(chatId, 'Maaf, terjadi kesalahan saat menyimpan data. Silakan coba lagi.');

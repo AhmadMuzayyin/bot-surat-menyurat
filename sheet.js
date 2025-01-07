@@ -116,6 +116,7 @@ function generateLetterNumber(lastNumber, letterType) {
     { surat: 'SK', kode: '188' },
     { surat: 'SURAT PERINTAH TUGAS', kode: '145' },
     { surat: 'SURAT MASUK', kode: '145' },
+    { surat: 'CUSTOM', kode: '______' },
   ];
   const code = data.find(item => item.surat === letterType).kode;
   const number = String(lastNumber + 1).padStart(3, '0');
