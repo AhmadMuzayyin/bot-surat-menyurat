@@ -1591,6 +1591,18 @@ async function processCompletedForm(chatId, userState, userData) {
     delete userStates[chatId];
   }
 }
+
+// monitoring
+const io = require('@pm2/io')
+
+const realtimeUser = io.metric({
+  name: 'Realtime user',
+})
+realtimeUser.set(42)
+io.init({
+  transactions: true, // will enable the transaction tracing
+  http: true // will enable metrics about the http server (optional)
+})
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
   console.log(`Server berjalan di port ${port}`);
