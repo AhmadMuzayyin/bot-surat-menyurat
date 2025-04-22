@@ -1,6 +1,7 @@
 const express = require('express');
 const TelegramBot = require('node-telegram-bot-api');
 const {
+  saveCustomToSpreadsheet,
   saveSuratKeluarToSpreadsheet,
   saveUndanganToSpreadsheet,
   saveSuratMasukToSpreadsheet,
@@ -246,6 +247,57 @@ bot.onText(/\/suratkeluar/, async (msg) => {
     }
   );
 });
+
+// Handle command /upload
+bot.onText(/\/upload/, async (msg) => {
+  if (msg.text && (msg.text === '/start' || msg.text === '/daftar')) {
+    return;
+  }
+  const isAuthorized = await checkUserAuthorization(msg, bot);
+  if (!isAuthorized) {
+    return;
+  }
+  const chatId = msg.chat.id;
+  userStates[chatId] = {
+    type: 'upload',
+    category: null,
+    uploadStatus: 'waiting_category',
+    files: [] // Track uploaded files in this session
+  };
+
+  const uploadCategories = [
+    { text: '1. Surat Keluar', data: 'upload_surat_keluar' },
+    { text: '2. Surat Masuk', data: 'upload_surat_masuk' },
+    { text: '3. Surat Custom', data: 'upload_surat_custom' },
+    { text: '4. Administrasi Desa Umum', data: 'upload_adm_desa_umum' },
+    { text: '5. Administrasi Desa Khusus', data: 'upload_adm_desa_khusus' }
+  ];
+
+  const inlineKeyboard = [];
+  for (let i = 0; i < uploadCategories.length; i++) {
+    inlineKeyboard.push([{
+      text: uploadCategories[i].text,
+      callback_data: uploadCategories[i].data
+    }]);
+  }
+  inlineKeyboard.push([{ text: '❌ Cancel', callback_data: 'cancel_upload' }]);
+
+  const keyboard = {
+    reply_markup: {
+      inline_keyboard: inlineKeyboard
+    }
+  };
+
+  bot.sendMessage(
+    chatId,
+    '📤 *Upload Dokumen*\n\nSilakan pilih kategori dokumen yang ingin Anda upload:',
+    {
+      parse_mode: 'Markdown',
+      ...keyboard
+    }
+  );
+});
+
 // Format surat masuk
 const suratMasukFormat = [
   { no: 1, field: 'Pengirim' },
@@ -401,8 +453,9 @@ bot.onText(/\/custom/, async (msg) => {
     formatMessage += `${item.no}. ${item.field}\n`;
   });
   formatMessage += '\nContoh input:\n';
-  formatMessage += '1. Surat Pembentukan Panitia\n';
-  formatMessage += '2. Diisi sesuai kebutuhan\n';
+  formatMessage += '1. 122\n';
+  formatMessage += '2. Surat Pembentukan Panitia\n';
+  formatMessage += '3. Diisi sesuai kebutuhan\n';
   formatMessage += 'dst.\n\n';
   formatMessage += 'Masukkan semua data sekaligus sesuai format nomor di atas\n';
   formatMessage += 'Atau kirim /cancel untuk membatalkan';
@@ -761,7 +814,71 @@ function handleCancel(chatId) {
 bot.on('callback_query', async (query) => {
   const chatId = query.message.chat.id;
   const data = query.data;
-  if (data.startsWith('remove_')) {
+
+  // Handle upload category selection
+  if (data.startsWith('upload_') && userStates[chatId]?.type === 'upload') {
+    const categories = {
+      'upload_surat_keluar': 'Surat Keluar',
+      'upload_surat_masuk': 'Surat Masuk',
+      'upload_surat_custom': 'Surat Custom',
+      'upload_adm_desa_umum': 'Administrasi Desa Umum',
+      'upload_adm_desa_khusus': 'Administrasi Desa Khusus'
+    };
+
+    const folderNames = {
+      'upload_surat_keluar': 'SuratKeluar',
+      'upload_surat_masuk': 'SuratMasuk',
+      'upload_surat_custom': 'SuratCustom',
+      'upload_adm_desa_umum': 'AdministrasiDesaUmum',
+      'upload_adm_desa_khusus': 'AdministrasiDesaKhusus'
+    };
+
+    const categoryName = categories[data];
+    const folderName = folderNames[data];
+
+    userStates[chatId].category = categoryName;
+    userStates[chatId].folderName = folderName;
+    userStates[chatId].uploadStatus = 'waiting_file';
+
+    await bot.editMessageText(
+      `📤 *Upload Dokumen: ${categoryName}*\n\n` +
+      `Silakan kirim dokumen yang ingin diupload. Dokumen yang diterima:\n` +
+      `- Foto (JPG, PNG)\n` +
+      `- Dokumen (DOC, DOCX)\n` +
+      `- PDF\n\n` +
+      `Dokumen akan disimpan ke folder Google Drive: *${folderName}*`,
+      {
+        chat_id: chatId,
+        message_id: query.message.message_id,
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '❌ Cancel', callback_data: 'cancel_upload' }]
+          ]
+        }
+      }
+    );
+
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data === 'cancel_upload') {
+    if (userStates[chatId]?.type === 'upload') {
+      delete userStates[chatId];
+      await bot.editMessageText(
+        '❌ Proses upload dibatalkan.',
+        {
+          chat_id: chatId,
+          message_id: query.message.message_id
+        }
+      );
+    }
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (query.data.startsWith('remove_')) {
     const userId = data.split('_')[1];
 
     if (!isAdmin(query.from.id)) {
@@ -1096,6 +1213,7 @@ bot.on('message', async (msg) => {
   if (userState && userState.type === 'Custom' && !msg.text.startsWith('/')) {
     const lines = msg.text.split('\n');
     const data = {};
+
     const errors = [];
 
     lines.forEach(line => {
@@ -1546,7 +1664,7 @@ bot.on('message', async (msg) => {
 async function processCompletedForm(chatId, userState, userData) {
   try {
     const sheetName = userState.type;
-    const result = await saveSuratKeluarToSpreadsheet(userState, sheetName, userData);
+    const result = userState.type === 'Custom' ? await saveCustomToSpreadsheet(userState, sheetName, userData) : await saveSuratKeluarToSpreadsheet(userState, sheetName, userData);
 
     if (result.success) {
       if (userState.type === 'Custom') {
@@ -1607,3 +1725,231 @@ const port = process.env.PORT || 3000;
 app.listen(port, () => {
   console.log(`Server berjalan di port ${port}`);
 });
+
+// Handle file uploads (documents, photos) for the upload command
+bot.on('photo', async (msg) => {
+  const chatId = msg.chat.id;
+  const userState = userStates[chatId];
+
+  if (userState?.type === 'upload' && userState.uploadStatus === 'waiting_file') {
+    const waitMessage = await bot.sendMessage(chatId, '⏳ Sedang mengupload foto...');
+
+    try {
+      // Get the photo (highest quality)
+      const photoId = msg.photo[msg.photo.length - 1].file_id;
+      const fileInfo = await bot.getFile(photoId);
+      const fileUrl = `https://api.telegram.org/file/bot${token}/${fileInfo.file_path}`;
+
+      // Upload to Google Drive using the folder specified in user state
+      const fileName = `photo_${Date.now()}.jpg`;
+      const uploadResult = await uploadToGoogleDrive(fileUrl, fileName, userState.folderName, 'photo');
+
+      if (uploadResult.success) {
+        await bot.editMessageText(
+          `✅ Foto berhasil diupload ke Google Drive!\n\n` +
+          `📁 Folder: ${userState.category}\n`,
+          {
+            chat_id: chatId,
+            message_id: waitMessage.message_id,
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: 'Upload File Lainnya', callback_data: userState.category.toLowerCase().replace(/\s+/g, '_') }],
+                [{ text: '❌ Selesai', callback_data: 'cancel_upload' }]
+              ]
+            }
+          }
+        );
+      } else {
+        throw new Error('Failed to upload to Google Drive');
+      }
+    } catch (error) {
+      console.error('Error uploading photo:', error);
+      await bot.editMessageText(
+        '❌ Gagal mengupload foto. Silakan coba lagi.',
+        {
+          chat_id: chatId,
+          message_id: waitMessage.message_id
+        }
+      );
+    }
+  }
+});
+
+bot.on('document', async (msg) => {
+  const chatId = msg.chat.id;
+  const userState = userStates[chatId];
+
+  if (userState?.type === 'upload' && userState.uploadStatus === 'waiting_file') {
+    const document = msg.document;
+    const mimeType = document.mime_type;
+    const fileName = document.file_name;
+
+    // Check if the document is of allowed type (PDF or DOC/DOCX)
+    const allowedMimeTypes = [
+      'application/pdf',                                                  // PDF
+      'application/msword',                                               // DOC
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document' // DOCX
+    ];
+
+    if (!allowedMimeTypes.includes(mimeType)) {
+      await bot.sendMessage(
+        chatId,
+        '⚠️ Format file tidak didukung. Hanya file PDF, DOC dan DOCX yang diperbolehkan.'
+      );
+      return;
+    }
+
+    const waitMessage = await bot.sendMessage(chatId, '⏳ Sedang mengupload dokumen...');
+
+    try {
+      const fileInfo = await bot.getFile(document.file_id);
+      const fileUrl = `https://api.telegram.org/file/bot${token}/${fileInfo.file_path}`;
+
+      // Determine file type
+      let fileType = 'document';
+      if (mimeType === 'application/pdf') {
+        fileType = 'pdf';
+      }
+
+      // Upload to Google Drive
+      const uploadResult = await uploadToGoogleDrive(fileUrl, fileName, userState.folderName, fileType);
+
+      if (uploadResult.success) {
+        await bot.editMessageText(
+          `✅ Dokumen berhasil diupload ke Google Drive!\n\n` +
+          `📁 Folder: ${userState.category}\n` +
+          `📄 Nama file: ${fileName}\n` +
+          `🔗 Link: ${uploadResult.fileUrl}`,
+          {
+            chat_id: chatId,
+            message_id: waitMessage.message_id,
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: 'Upload File Lainnya', callback_data: userState.category.toLowerCase().replace(/\s+/g, '_') }],
+                [{ text: '❌ Selesai', callback_data: 'cancel_upload' }]
+              ]
+            }
+          }
+        );
+      } else {
+        throw new Error('Failed to upload to Google Drive');
+      }
+    } catch (error) {
+      console.error('Error uploading document:', error);
+      await bot.editMessageText(
+        '❌ Gagal mengupload dokumen. Silakan coba lagi.',
+        {
+          chat_id: chatId,
+          message_id: waitMessage.message_id
+        }
+      );
+    }
+  }
+});
+
+// Function to upload files to Google Drive
+async function uploadToGoogleDrive(fileUrl, fileName, folderName, fileType) {
+  try {
+    const { google } = require('googleapis');
+    const axios = require('axios');
+    const fs = require('fs');
+    const path = require('path');
+    const os = require('os');
+
+    // Menggunakan auth yang sudah ada di auth.js
+    const auth = require('./auth');
+
+    // Initialize Google Drive API dengan autentikasi service account
+    const drive = google.drive({ version: 'v3', auth });
+
+    // Download file dari Telegram
+    const response = await axios({
+      url: fileUrl,
+      method: 'GET',
+      responseType: 'stream'
+    });
+
+    const tempFilePath = path.join(os.tmpdir(), fileName);
+    const writer = fs.createWriteStream(tempFilePath);
+
+    response.data.pipe(writer);
+
+    await new Promise((resolve, reject) => {
+      writer.on('finish', resolve);
+      writer.on('error', reject);
+    });
+
+    // Use the specified Google Drive folder ID instead of creating new folders
+    const parentFolderId = '1JexwsLYnMGxuui32vLrnowPypnHVQQvH';
+
+    // Create subfolder within the parent folder if needed
+    let folderId;
+    const folderQuery = `name='${folderName}' and mimeType='application/vnd.google-apps.folder' and '${parentFolderId}' in parents`;
+    const folderRes = await drive.files.list({
+      q: folderQuery,
+      fields: 'files(id, name)'
+    });
+
+    if (folderRes.data.files.length > 0) {
+      folderId = folderRes.data.files[0].id;
+    } else {
+      // Buat folder jika tidak ada
+      const folderMetadata = {
+        name: folderName,
+        mimeType: 'application/vnd.google-apps.folder',
+        parents: [parentFolderId] // Use the specified parent folder ID
+      };
+
+      const folder = await drive.files.create({
+        resource: folderMetadata,
+        fields: 'id'
+      });
+
+      folderId = folder.data.id;
+    }
+
+    // Tentukan MIME type
+    let mimeType;
+    switch (fileType) {
+      case 'pdf':
+        mimeType = 'application/pdf';
+        break;
+      case 'photo':
+        mimeType = 'image/jpeg';
+        break;
+      default:
+        mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    }
+
+    // Upload file ke folder
+    const fileMetadata = {
+      name: fileName,
+      parents: [folderId]
+    };
+
+    const media = {
+      mimeType: mimeType,
+      body: fs.createReadStream(tempFilePath)
+    };
+
+    const file = await drive.files.create({
+      resource: fileMetadata,
+      media: media,
+      fields: 'id, webViewLink'
+    });
+
+    // Hapus file sementara
+    fs.unlinkSync(tempFilePath);
+
+    return {
+      success: true,
+      fileUrl: file.data.webViewLink
+    };
+  } catch (error) {
+    console.error('Error uploading to Google Drive:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}

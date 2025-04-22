@@ -37,10 +37,12 @@ async function generateDocument(templateType, data) {
       throw new Error(`Template tidak ditemukan untuk ${templateType}`);
     }
     // Copy template
+    let nomorSurat = data['NomorSurat'];
+    nomorSurat = nomorSurat.replace(/\//g, '-');
     const copyResponse = await drive.files.copy({
       fileId: templateId,
       requestBody: {
-        name: `${templateType}_${new Date().toLocaleString('id-ID', {
+        name: `${templateType}_${nomorSurat}_${new Date().toLocaleString('id-ID', {
           dateStyle: 'long'
         })}`,
       }
@@ -80,7 +82,7 @@ async function generateDocument(templateType, data) {
     });
 
     // Save PDF temporarily
-    const fileName = `${templateType}_${new Date().toLocaleString('id-ID', {
+    const fileName = `${templateType}_${nomorSurat}_${new Date().toLocaleString('id-ID', {
       dateStyle: 'long'
     })}.docx`;
     const filePath = path.join(__dirname, 'temp', fileName);

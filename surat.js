@@ -212,8 +212,9 @@ const suratFormat = {
     { no: 13, field: 'Di' }
   ],
   'Custom': [
-    { no: 1, field: 'Nama Surat' },
-    { no: 2, field: 'Isi Surat' },
+    { no: 1, field: 'Nomor Surat' },
+    { no: 2, field: 'Nama Surat' },
+    { no: 3, field: 'Isi Surat' },
   ]
 };
 const jenisSuratKeluar = [

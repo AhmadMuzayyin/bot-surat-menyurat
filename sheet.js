@@ -94,7 +94,7 @@ async function getLastLetterNumber(sheets, letterType) {
     return 0;
   }
 }
-function generateLetterNumber(lastNumber, letterType) {
+function generateLetterNumber(lastNumber, letterType, codeFromInput = null) {
   const data = [
     { surat: "KETERANGAN USAHA", kode: "510" },
     { surat: "SKCK", kode: "470" },
@@ -116,7 +116,7 @@ function generateLetterNumber(lastNumber, letterType) {
     { surat: 'SK', kode: '188' },
     { surat: 'SURAT PERINTAH TUGAS', kode: '145' },
     { surat: 'SURAT MASUK', kode: '145' },
-    { surat: 'CUSTOM', kode: '______' },
+    { surat: 'CUSTOM', kode: codeFromInput },
   ];
   const code = data.find(item => item.surat === letterType).kode;
   const number = String(lastNumber + 1).padStart(3, '0');
@@ -124,6 +124,70 @@ function generateLetterNumber(lastNumber, letterType) {
   return `${code}/${number}/311.110/2025`;
 }
 
+async function saveCustomToSpreadsheet(state, sheetName, userData) {
+  try {
+    const authClient = await auth.getClient();
+    const sheets = google.sheets({ version: 'v4', auth: authClient });
+    const sheetExists = await checkSheetExists(sheets, sheetName);
+    const data = state.data;
+
+    if (!sheetExists) {
+      const created = await createNewSheet(sheets, sheetName);
+      if (!created) {
+        throw new Error('Gagal membuat sheet baru');
+      }
+      const headerSetup = await setupSheetHeader(sheets, sheetName, data);
+      if (!headerSetup) {
+        throw new Error('Gagal setup header');
+      }
+    }
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    const kode = data['Nomor Surat'];
+    const lastNumber = await getLastLetterNumber(sheets, sheetName.toString().toUpperCase());
+    const letterNumber = generateLetterNumber(lastNumber, sheetName.toString().toUpperCase(), codeFromInput = kode);
+    const currentDate = new Date().toLocaleString('id-ID', {
+      dateStyle: 'long',
+    });
+    const values = [
+      [letterNumber, currentDate, ...Object.values(data)]
+    ];
+    const response = await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `${sheetName}!A:${String.fromCharCode(66 + Object.keys(data).length)}`,
+      valueInputOption: 'RAW',
+      insertDataOption: 'INSERT_ROWS',
+      resource: {
+        values
+      }
+    });
+    if (response.status == 200) {
+      const backupNomorSurat = {
+        'Nomor Surat': letterNumber,
+        'Timestamp': currentDate,
+        'Tentang': sheetName,
+        'User': `https://t.me/${userData.from.username}`
+      }
+      const backupValues = [
+        Object.values(backupNomorSurat)
+      ]
+      await sheets.spreadsheets.values.append({
+        spreadsheetId,
+        range: `Sheet1!A:${String.fromCharCode(66 + Object.keys(backupNomorSurat).length)}`,
+        valueInputOption: 'RAW',
+        insertDataOption: 'INSERT_ROWS',
+        resource: {
+          values: backupValues
+        }
+      });
+    }
+
+    console.log('Data berhasil disimpan');
+    return { success: true, letterNumber };
+  } catch (error) {
+    console.error('Error saat menyimpan data:', error.message);
+    return { success: false, error: error.message };
+  }
+}
 async function saveSuratKeluarToSpreadsheet(state, sheetName, userData) {
   try {
     const authClient = await auth.getClient();
@@ -529,6 +593,7 @@ async function updateLetterData(userState, data, bot, chatId) {
 }
 
 module.exports = {
+  saveCustomToSpreadsheet,
   saveSuratKeluarToSpreadsheet,
   saveUndanganToSpreadsheet,
   saveSuratMasukToSpreadsheet,
